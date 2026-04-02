@@ -12,6 +12,9 @@ import type {
   PolygonEntityDto,
   RouteEntityDto,
 } from '@shared/types/mission.types';
+import { getEditHandles } from '../model/entityEditing';
+import type { ImageMarkerRecord } from './imageMarkerFeatures';
+import { getImageMarkerIconSrc } from './imageMarkerStyle';
 
 type StandardEntityDto = Exclude<MissionEntityDto, CircleEntityDto>;
 type RenderRole = 'circle' | 'doubleCircle' | 'point' | 'routeLine' | 'routeVertex' | 'polygon';
@@ -47,6 +50,34 @@ export function mapEntitiesToLabelFeatures(
       type: entity.type,
     });
     feature.setId(`label-${entity.id}`);
+    return feature;
+  });
+}
+
+export function mapEditHandlesToFeatures(entity: MissionEntityDto): Feature<Point>[] {
+  return getEditHandles(entity).map((handle) => {
+    const feature = new Feature({
+      geometry: new Point(fromLonLat(handle.position)),
+      entityId: handle.entityId,
+      entityType: handle.entityType,
+      handleKind: handle.kind,
+      handleCoordinate: handle.position,
+      vertexIndex: handle.vertexIndex,
+      featureKind: 'editHandle',
+    });
+    feature.setId(handle.id);
+    return feature;
+  });
+}
+
+export function mapImageMarkersToFeatures(records: ImageMarkerRecord[]): Feature<Point>[] {
+  return records.map((record) => {
+    const feature = new Feature({
+      geometry: new Point(fromLonLat(record.coordinate)),
+      iconVariant: record.iconVariant,
+      iconSrc: getImageMarkerIconSrc(record.iconVariant),
+    });
+    feature.setId(record.id);
     return feature;
   });
 }

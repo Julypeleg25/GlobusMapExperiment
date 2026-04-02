@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { PickingInfo } from '@deck.gl/core';
-import type { MapboxOverlay } from '@deck.gl/mapbox';
-import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl';
+import type { FeatureLike } from 'ol/Feature';
+import type OlMap from 'ol/Map';
+import type MapBrowserEvent from 'ol/MapBrowserEvent';
+import { unByKey } from 'ol/Observable';
+import type { Pixel } from 'ol/pixel';
+import { fromLonLat, toLonLat } from 'ol/proj';
 import { useSelectedEntity } from '../hooks/useSelectedEntity';
 import type {
   LonLatCoordinate,
@@ -12,8 +15,7 @@ import type {
 import type { MenuOverlayApi } from '../map/menuOverlay';
 
 interface MapClickMenuProps {
-  map: MapLibreMap | null;
-  deckOverlay: MapboxOverlay | null;
+  map: OlMap | null;
   menu: MenuOverlayApi;
   entities: MissionEntityDto[];
   editingEntityId: string | null;
@@ -53,14 +55,8 @@ interface RouteVertexDatum {
   entity: RouteEntityDto;
 }
 
-interface EditHandleLike {
-  entityId: string;
-  kind: 'anchor' | 'vertex';
-}
-
 export function MapClickMenu({
   map,
-  deckOverlay,
   menu,
   entities,
   editingEntityId,
@@ -99,7 +95,9 @@ export function MapClickMenu({
   }, [editingEntityId, menuState]);
 
   useEffect(() => {
-    if (!map || !deckOverlay) return;
+    if (!map) {
+      return;
+    }
 
     const hideMenu = () => {
       setMenuState({ kind: 'closed' });
@@ -118,12 +116,12 @@ export function MapClickMenu({
       setMenuState({ kind: 'editing', entityId: entity.id, coordinate });
     };
 
-    const handleLeftClick = (event: MapMouseEvent) => {
-      const coordinate: LonLatCoordinate = [event.lngLat.lng, event.lngLat.lat];
+      const handleLeftClick = (event: MapBrowserEvent<PointerEvent>) => {
+      const coordinate = toLonLat(event.coordinate) as LonLatCoordinate;
 
       if (menuState.kind === 'editing' && editingEntity) {
         if (editingEntity.type === 'route' || editingEntity.type === 'polygon') {
-          if (isEditHandleHit(deckOverlay, event.point.x, event.point.y)) {
+          if (isEditHandleHit(map, event.pixel)) {
             return;
           }
 
@@ -144,12 +142,7 @@ export function MapClickMenu({
         return;
       }
 
-      const clickedEntities = getClickedEntities(
-        deckOverlay,
-        event.point.x,
-        event.point.y,
-        entityLookup,
-      );
+      const clickedEntities = getClickedEntities(map, event.pixel, entityLookup);
 
       if (!clickedEntities.length) {
         if (menuState.kind === 'single') {
@@ -176,18 +169,14 @@ export function MapClickMenu({
       }
     };
 
-    const handleContextMenu = (event: MapMouseEvent) => {
-      event.originalEvent.preventDefault();
-      const clickedEntities = getClickedEntities(
-        deckOverlay,
-        event.point.x,
-        event.point.y,
-        entityLookup,
-      );
+    const handleContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+      const pixel = map.getEventPixel(event);
+      const coordinate = toLonLat(map.getEventCoordinate(event)) as LonLatCoordinate;
+      const clickedEntities = getClickedEntities(map, pixel, entityLookup);
 
       if (!clickedEntities.length) {
         if (menuState.kind !== 'editing') {
-          const coordinate: LonLatCoordinate = [event.lngLat.lng, event.lngLat.lat];
           menu.showAt(coordinate);
           setSelectedEntityId(null);
           setMenuState({ kind: 'create', coordinate });
@@ -195,7 +184,6 @@ export function MapClickMenu({
         return;
       }
 
-      const coordinate: LonLatCoordinate = [event.lngLat.lng, event.lngLat.lat];
       menu.showAt(coordinate);
 
       if (clickedEntities.length === 1) {
@@ -211,21 +199,15 @@ export function MapClickMenu({
       }
     };
 
-    const preventBrowserContextMenu = (event: MouseEvent) => {
-      event.preventDefault();
-    };
-
-    map.on('click', handleLeftClick);
-    map.on('contextmenu', handleContextMenu);
-    map.getCanvas().addEventListener('contextmenu', preventBrowserContextMenu);
+    const viewport = map.getViewport();
+    const singleClickKey = map.on('singleclick', handleLeftClick as never);
+    viewport.addEventListener('contextmenu', handleContextMenu);
 
     return () => {
-      map.off('click', handleLeftClick);
-      map.off('contextmenu', handleContextMenu);
-      map.getCanvas().removeEventListener('contextmenu', preventBrowserContextMenu);
+      unByKey(singleClickKey);
+      viewport.removeEventListener('contextmenu', handleContextMenu);
     };
   }, [
-    deckOverlay,
     editingEntity,
     entityLookup,
     map,
@@ -234,6 +216,7 @@ export function MapClickMenu({
     onAddVertex,
     onBeginEdit,
     onEndEdit,
+    onPinEntity,
     setSelectedEntityId,
   ]);
 
@@ -253,9 +236,10 @@ export function MapClickMenu({
   };
 
   const focusOnEntity = (entity: MissionEntityDto) => {
-    map.flyTo({
-      center: [entity.lon, entity.lat],
-      zoom: Math.max(map.getZoom(), 13),
+    const view = map.getView();
+    view.animate({
+      center: fromLonLat([entity.lon, entity.lat]),
+      zoom: Math.max(view.getZoom() ?? 0, 13),
       duration: 320,
     });
   };
@@ -583,70 +567,59 @@ export function MapClickMenu({
   );
 }
 
-function isEditHandleHit(deckOverlay: MapboxOverlay, x: number, y: number): boolean {
-  const picked = deckOverlay.pickObject({
-    x,
-    y,
-    radius: 10,
-    layerIds: ['edit-handles'],
+function isEditHandleHit(map: OlMap, pixel: Pixel): boolean {
+  return map.hasFeatureAtPixel(pixel, {
+    hitTolerance: 10,
+    layerFilter: (layer) => layer.get('interactiveRole') === 'editHandle',
   });
-
-  return Boolean(picked?.object);
 }
 
 function getClickedEntities(
-  deckOverlay: MapboxOverlay,
-  x: number,
-  y: number,
-  entityLookup: Map<string, MissionEntityDto>,
+  map: OlMap,
+  pixel: Pixel,
+  entityLookup: globalThis.Map<string, MissionEntityDto>,
 ): MissionEntityDto[] {
-  const pickedObjects = deckOverlay.pickMultipleObjects({
-    x,
-    y,
-    radius: 8,
-    depth: 16,
-  });
   const seenIds = new Set<string>();
   const clickedEntities: MissionEntityDto[] = [];
 
-  for (const picked of pickedObjects) {
-    const entity = resolvePickedEntity(picked, entityLookup);
-    if (!entity || seenIds.has(entity.id)) {
-      continue;
-    }
+  map.forEachFeatureAtPixel(
+    pixel,
+    (feature) => {
+      const entity = resolvePickedEntity(feature, entityLookup);
+      if (!entity || seenIds.has(entity.id)) {
+        return undefined;
+      }
 
-    seenIds.add(entity.id);
-    clickedEntities.push(entity);
-  }
+      seenIds.add(entity.id);
+      clickedEntities.push(entity);
+      return undefined;
+    },
+    {
+      hitTolerance: 8,
+      layerFilter: (layer) => layer.get('selectable') === true,
+    },
+  );
 
   return clickedEntities.sort((left, right) => right.priority - left.priority);
 }
 
 function resolvePickedEntity(
-  picked: PickingInfo,
-  entityLookup: Map<string, MissionEntityDto>,
+  feature: FeatureLike,
+  entityLookup: globalThis.Map<string, MissionEntityDto>,
 ): MissionEntityDto | null {
-  const object = picked.object as
-    | MissionEntityDto
-    | RouteVertexDatum
-    | EditHandleLike
-    | null
-    | undefined;
-
-  if (!object) {
-    return null;
+  const entityId = feature.get('entityId');
+  if (typeof entityId === 'string') {
+    return entityLookup.get(entityId) ?? null;
   }
 
-  if ('entity' in object && object.entity) {
-    return object.entity;
+  const featureId = feature.getId();
+  if (featureId != null) {
+    return entityLookup.get(String(featureId)) ?? null;
   }
 
-  if ('entityId' in object && typeof object.entityId === 'string') {
-    return entityLookup.get(object.entityId) ?? null;
-  }
-
-  if ('id' in object && typeof object.id === 'string') {
-    return entityLookup.get(object.id) ?? (isMissionEntity(object) ? object : null);
+  const entity = feature.get('entity') as MissionEntityDto | RouteVertexDatum | undefined;
+  if (entity && 'id' in entity && typeof entity.id === 'string') {
+    return entityLookup.get(entity.id) ?? (isMissionEntity(entity) ? entity : null);
   }
 
   return null;

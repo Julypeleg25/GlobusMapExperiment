@@ -9,12 +9,15 @@ export function createMap(target: HTMLElement, layers: MapLayers): Map {
   return new Map({
     target,
     pixelRatio: 1,
+    controls: [],
     layers: [
       new TileLayer({ source: new OSM() }),
       layers.bulkCirclesLayer,
       layers.entitiesLayer,
-      layers.labelsLayer,
+      layers.imageMarkersLayer,
       layers.selectedEntityLayer,
+      layers.editHandlesLayer,
+      layers.labelsLayer,
     ],
     view: new View({
       center: fromLonLat([35.0, 31.4]),

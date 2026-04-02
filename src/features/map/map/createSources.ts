@@ -8,6 +8,8 @@ export interface MapSources {
   entitiesSource: VectorSource<Feature<Geometry>>;
   labelsSource: VectorSource<Feature<Point>>;
   selectedEntitySource: VectorSource<Feature<Geometry>>;
+  editHandlesSource: VectorSource<Feature<Point>>;
+  imageMarkersSource: VectorSource<Feature<Point>>;
 }
 
 export function createSources(): MapSources {
@@ -16,5 +18,7 @@ export function createSources(): MapSources {
     entitiesSource: new VectorSource(),
     labelsSource: new VectorSource(),
     selectedEntitySource: new VectorSource(),
+    editHandlesSource: new VectorSource(),
+    imageMarkersSource: new VectorSource(),
   };
 }

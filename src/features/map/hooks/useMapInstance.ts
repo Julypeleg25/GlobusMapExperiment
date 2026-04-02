@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MapboxOverlay } from '@deck.gl/mapbox';
-import maplibregl, { type StyleSpecification } from 'maplibre-gl';
+import Map from 'ol/Map';
+import { fromLonLat } from 'ol/proj';
+import { unByKey } from 'ol/Observable';
+import type { EventsKey } from 'ol/events';
 import type { MenuOverlayApi, MenuOverlayState } from '../map/menuOverlay';
+import { createLayers, type MapLayers } from '../map/createLayers';
+import { createMap } from '../map/createMap';
+import { createSources, type MapSources } from '../map/createSources';
 
-const initialCenter: [number, number] = [35.0, 31.4];
 const initialZoom = 7.3;
 
 export function useMapInstance() {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  const deckOverlayRef = useRef<MapboxOverlay | null>(null);
-  const [map, setMap] = useState<maplibregl.Map | null>(null);
-  const [deckOverlay, setDeckOverlay] = useState<MapboxOverlay | null>(null);
+  const mapRef = useRef<Map | null>(null);
+  const [map, setMap] = useState<Map | null>(null);
+  const [sources, setSources] = useState<MapSources | null>(null);
+  const [layers, setLayers] = useState<MapLayers | null>(null);
   const [zoom, setZoom] = useState(initialZoom);
   const [menuState, setMenuState] = useState<MenuOverlayState>({
     isOpen: false,
@@ -38,80 +42,74 @@ export function useMapInstance() {
         return currentState;
       }
 
-      const projected = currentMap.project({
-        lng: currentState.lngLat[0],
-        lat: currentState.lngLat[1],
-      });
+      const pixel = currentMap.getPixelFromCoordinate(fromLonLat(currentState.lngLat));
+      const nextPosition = { x: pixel[0], y: pixel[1] };
+      if (
+        currentState.screenPosition &&
+        Math.round(currentState.screenPosition.x) === Math.round(nextPosition.x) &&
+        Math.round(currentState.screenPosition.y) === Math.round(nextPosition.y)
+      ) {
+        return currentState;
+      }
 
       return {
         ...currentState,
-        screenPosition: { x: projected.x, y: projected.y },
+        screenPosition: nextPosition,
       };
     });
   }, []);
 
   const showMenuAt = useCallback((lngLat: [number, number]) => {
     const currentMap = mapRef.current;
-    if (!currentMap) return;
+    if (!currentMap) {
+      return;
+    }
 
-    const projected = currentMap.project({ lng: lngLat[0], lat: lngLat[1] });
+    const pixel = currentMap.getPixelFromCoordinate(fromLonLat(lngLat));
     setMenuState({
       isOpen: true,
       lngLat,
-      screenPosition: { x: projected.x, y: projected.y },
+      screenPosition: { x: pixel[0], y: pixel[1] },
     });
   }, []);
 
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    if (!containerRef.current || mapRef.current) {
+      return;
+    }
 
-    const nextMap = new maplibregl.Map({
-      container: containerRef.current,
-      style: createBasemapStyle(),
-      center: initialCenter,
-      zoom: initialZoom,
-      minZoom: 5,
-      maxZoom: 20,
-      attributionControl: false,
-      fadeDuration: 0,
-    });
-
-    const nextDeckOverlay = new MapboxOverlay({
-      interleaved: false,
-      useDevicePixels: false,
-      layers: [],
-    });
-
-    const syncZoom = () => {
-      setZoom(nextMap.getZoom());
-    };
-
-    nextMap.addControl(nextDeckOverlay);
-    nextMap.on('load', syncZoom);
-    nextMap.on('zoomend', syncZoom);
-    nextMap.on('moveend', syncZoom);
-    nextMap.on('move', syncMenuPosition);
-    nextMap.on('zoom', syncMenuPosition);
+    containerRef.current.tabIndex = 0;
+    const nextSources = createSources();
+    const nextLayers = createLayers(nextSources);
+    const nextMap = createMap(containerRef.current, nextLayers);
+    const view = nextMap.getView();
+    const eventKeys: EventsKey[] = [
+      view.on('change:resolution', () => {
+        setZoom(view.getZoom() ?? initialZoom);
+        syncMenuPosition();
+      }),
+      view.on('change:center', syncMenuPosition),
+    ];
 
     mapRef.current = nextMap;
-    deckOverlayRef.current = nextDeckOverlay;
     setMap(nextMap);
-    setDeckOverlay(nextDeckOverlay);
+    setSources(nextSources);
+    setLayers(nextLayers);
+    setZoom(view.getZoom() ?? initialZoom);
 
     return () => {
-      nextMap.off('load', syncZoom);
-      nextMap.off('zoomend', syncZoom);
-      nextMap.off('moveend', syncZoom);
-      nextMap.off('move', syncMenuPosition);
-      nextMap.off('zoom', syncMenuPosition);
-      nextMap.removeControl(nextDeckOverlay);
-      nextMap.remove();
+      unByKey(eventKeys);
+      hideMenu();
+      nextMap.setTarget(undefined);
+      for (const layer of Object.values(nextLayers)) {
+        layer.dispose();
+      }
       mapRef.current = null;
-      deckOverlayRef.current = null;
       setMap(null);
-      setDeckOverlay(null);
+      setSources(null);
+      setLayers(null);
     };
-  }, [syncMenuPosition]);
+  }, [hideMenu, syncMenuPosition]);
 
   const menu = useMemo<MenuOverlayApi>(
     () => ({
@@ -122,26 +120,5 @@ export function useMapInstance() {
     [menuState, showMenuAt, hideMenu],
   );
 
-  return { containerRef, map, deckOverlay, zoom, menu };
-}
-
-function createBasemapStyle(): StyleSpecification {
-  return {
-    version: 8,
-    sources: {
-      osm: {
-        type: 'raster',
-        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-        tileSize: 256,
-        attribution: '&copy; OpenStreetMap contributors',
-      },
-    },
-    layers: [
-      {
-        id: 'osm',
-        type: 'raster',
-        source: 'osm',
-      },
-    ],
-  };
+  return { containerRef, map, sources, layers, zoom, menu };
 }

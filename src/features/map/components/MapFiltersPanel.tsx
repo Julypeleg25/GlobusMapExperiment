@@ -33,8 +33,8 @@ export function MapFiltersPanel({
         <p className="eyebrow">Operations View</p>
         <h1>Mission map</h1>
         <p className="muted">
-          Stable MapLibre camera with deck.gl layers for circles, routes, polygons,
-          labels, and selection highlights.
+          OpenLayers map with WebGL-backed entity layers, labels, and selection
+          highlights.
         </p>
       </div>
 

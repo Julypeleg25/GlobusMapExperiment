@@ -5,32 +5,50 @@ import type Geometry from 'ol/geom/Geometry';
 import type Point from 'ol/geom/Point';
 import type VectorSource from 'ol/source/Vector';
 import type { MapSources } from './createSources';
-import { createEntityStyle, createSelectedEntityStyle } from './entityStyle';
 import { createLabelStyle } from './labelStyle';
 import { createBulkWebglStyle } from './mapStyle';
+import {
+  createEditHandleWebglStyle,
+  createEntityWebglStyle,
+  createImageMarkerWebglStyle,
+  createSelectedEntityWebglStyle,
+} from './webglStyles';
 
 export interface MapLayers {
   bulkCirclesLayer: WebGLVectorLayer;
-  entitiesLayer: VectorLayer<VectorSource<Feature<Geometry>>>;
+  entitiesLayer: WebGLVectorLayer<VectorSource<Feature<Geometry>>>;
+  imageMarkersLayer: WebGLVectorLayer<VectorSource<Feature<Point>>>;
   labelsLayer: VectorLayer<VectorSource<Feature<Point>>>;
-  selectedEntityLayer: VectorLayer<VectorSource<Feature<Geometry>>>;
+  selectedEntityLayer: WebGLVectorLayer<VectorSource<Feature<Geometry>>>;
+  editHandlesLayer: WebGLVectorLayer<VectorSource<Feature<Point>>>;
 }
 
 export function createLayers(sources: MapSources): MapLayers {
   const bulkCirclesLayer = new WebGLVectorLayer({
     source: sources.bulkCirclesSource,
-    style: createBulkWebglStyle() as never,
+    style: createBulkWebglStyle(),
     minZoom: 0,
     maxZoom: 28,
   });
 
-  const entitiesLayer = new VectorLayer({
+  const entitiesLayer = new WebGLVectorLayer({
     source: sources.entitiesSource,
-    style: createEntityStyle(),
-    updateWhileAnimating: false,
-    updateWhileInteracting: false,
+    style: createEntityWebglStyle(),
+    disableHitDetection: false,
+    minZoom: 0,
+    maxZoom: 28,
   });
   entitiesLayer.set('selectable', true);
+  entitiesLayer.set('interactiveRole', 'entity');
+
+  const imageMarkersLayer = new WebGLVectorLayer({
+    source: sources.imageMarkersSource,
+    style: createImageMarkerWebglStyle(),
+    disableHitDetection: true,
+    minZoom: 7,
+    maxZoom: 28,
+  });
+  imageMarkersLayer.set('selectable', false);
 
   const labelsLayer = new VectorLayer({
     source: sources.labelsSource,
@@ -43,19 +61,33 @@ export function createLayers(sources: MapSources): MapLayers {
   });
   labelsLayer.set('selectable', false);
 
-  const selectedEntityLayer = new VectorLayer({
+  const selectedEntityLayer = new WebGLVectorLayer({
     source: sources.selectedEntitySource,
-    style: createSelectedEntityStyle(),
+    style: createSelectedEntityWebglStyle(),
+    disableHitDetection: false,
     zIndex: 1000,
   });
   selectedEntityLayer.set('selectable', true);
+  selectedEntityLayer.set('interactiveRole', 'entity');
+
+  const editHandlesLayer = new WebGLVectorLayer({
+    source: sources.editHandlesSource,
+    style: createEditHandleWebglStyle(),
+    disableHitDetection: false,
+    zIndex: 1100,
+  });
+  editHandlesLayer.set('selectable', false);
+  editHandlesLayer.set('interactiveRole', 'editHandle');
 
   bulkCirclesLayer.set('selectable', true);
+  bulkCirclesLayer.set('interactiveRole', 'entity');
 
   return {
     bulkCirclesLayer,
     entitiesLayer,
+    imageMarkersLayer,
     labelsLayer,
     selectedEntityLayer,
+    editHandlesLayer,
   };
 }

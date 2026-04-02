@@ -4,6 +4,7 @@ import Style from 'ol/style/Style';
 import Icon from 'ol/style/Icon';
 
 const iconStyleCache = new Map<string, Style>();
+const iconSourceCache = new Map<string, string>();
 
 export function createImageMarkerStyle(): StyleFunction {
   return (feature: FeatureLike) => {
@@ -15,7 +16,7 @@ export function createImageMarkerStyle(): StyleFunction {
 
     const style = new Style({
       image: new Icon({
-        src: createSvgDataUri(getVariantConfig(variant)),
+        src: getImageMarkerIconSrc(variant),
         anchor: [0.5, 1],
         scale: 0.22,
       }),
@@ -24,6 +25,17 @@ export function createImageMarkerStyle(): StyleFunction {
     iconStyleCache.set(variant, style);
     return style;
   };
+}
+
+export function getImageMarkerIconSrc(variant: string): string {
+  const cached = iconSourceCache.get(variant);
+  if (cached) {
+    return cached;
+  }
+
+  const iconSource = createSvgDataUri(getVariantConfig(variant));
+  iconSourceCache.set(variant, iconSource);
+  return iconSource;
 }
 
 function getVariantConfig(variant: string): {

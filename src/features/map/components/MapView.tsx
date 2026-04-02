@@ -35,7 +35,7 @@ interface MapViewProps {
 }
 
 export function MapView({ missionId }: MapViewProps) {
-  const { containerRef, map, deckOverlay, zoom, menu } = useMapInstance();
+  const { containerRef, map, sources, layers, zoom, menu } = useMapInstance();
   const { selectedEntityId, setSelectedEntityId } = useSelectedEntity();
   const entitiesQuery = useMissionEntitiesQuery(missionId);
   const [editableEntities, setEditableEntities] = useState<MissionEntityDto[]>([]);
@@ -160,10 +160,9 @@ export function MapView({ missionId }: MapViewProps) {
       />
       <div className="map-stage">
         <div ref={containerRef} className="map-canvas" />
-        <ImageMarkersCanvas map={map} missionId={missionId} />
+        <ImageMarkersCanvas sources={sources} missionId={missionId} />
         <MapClickMenu
           map={map}
-          deckOverlay={deckOverlay}
           menu={menu}
           entities={entityCollection.entities}
           editingEntityId={editingEntityId}
@@ -180,17 +179,17 @@ export function MapView({ missionId }: MapViewProps) {
         />
         <EntityEditController
           map={map}
-          deckOverlay={deckOverlay}
           editingEntity={editingEntity}
           onApplyHandleDrag={handleApplyHandleDrag}
         />
         <FpsMeter />
         <div className="map-watermark">
-          MapLibre + deck.gl mission rendering with plonter picking and selection highlight.
+          OpenLayers mission rendering with WebGL layers, plonter picking, and edit handles.
         </div>
       </div>
       <MissionMapBinder
-        deckOverlay={deckOverlay}
+        sources={sources}
+        layers={layers}
         zoom={zoom}
         entities={entityCollection.entities}
         circleEntities={entityCollection.circleEntities}
