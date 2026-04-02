@@ -1,0 +1,744 @@
+import { useEffect, useMemo, useState } from 'react';
+import type { PickingInfo } from '@deck.gl/core';
+import type { MapboxOverlay } from '@deck.gl/mapbox';
+import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl';
+import { useSelectedEntity } from '../hooks/useSelectedEntity';
+import type {
+  LonLatCoordinate,
+  MissionEntityDto,
+  MissionEntityType,
+  RouteEntityDto,
+} from '@shared/types/mission.types';
+import type { MenuOverlayApi } from '../map/menuOverlay';
+
+interface MapClickMenuProps {
+  map: MapLibreMap | null;
+  deckOverlay: MapboxOverlay | null;
+  menu: MenuOverlayApi;
+  entities: MissionEntityDto[];
+  editingEntityId: string | null;
+  onBeginEdit: (entityId: string) => void;
+  onEndEdit: () => void;
+  onUpdateLabel: (entityId: string, label: string) => void;
+  onUpdatePrimaryColor: (entityId: string, color: string) => void;
+  onUpdatePolygonFillColor: (entityId: string, color: string) => void;
+  onUpdateCircleRadius: (entityId: string, radius: number) => void;
+  onUpdateDoubleCircleRadii: (
+    entityId: string,
+    innerRadius: number,
+    outerRadius: number,
+  ) => void;
+  onPinEntity: (entityId: string, coordinate: LonLatCoordinate) => void;
+  onAddVertex: (entityId: string, coordinate: LonLatCoordinate) => void;
+  onCreateEntity: (entityType: MissionEntityType, coordinate: LonLatCoordinate) => string;
+}
+
+type ClickMenuState =
+  | { kind: 'closed' }
+  | { kind: 'create'; coordinate: LonLatCoordinate }
+  | { kind: 'single'; entityId: string; coordinate: LonLatCoordinate }
+  | {
+      kind: 'plonter';
+      entityIds: string[];
+      source: 'left' | 'right';
+      coordinate: LonLatCoordinate;
+    }
+  | {
+      kind: 'editing';
+      entityId: string;
+      coordinate: LonLatCoordinate;
+    };
+
+interface RouteVertexDatum {
+  entity: RouteEntityDto;
+}
+
+interface EditHandleLike {
+  entityId: string;
+  kind: 'anchor' | 'vertex';
+}
+
+export function MapClickMenu({
+  map,
+  deckOverlay,
+  menu,
+  entities,
+  editingEntityId,
+  onBeginEdit,
+  onEndEdit,
+  onUpdateLabel,
+  onUpdatePrimaryColor,
+  onUpdatePolygonFillColor,
+  onUpdateCircleRadius,
+  onUpdateDoubleCircleRadii,
+  onPinEntity,
+  onAddVertex,
+  onCreateEntity,
+}: MapClickMenuProps) {
+  const { setSelectedEntityId } = useSelectedEntity();
+  const [menuState, setMenuState] = useState<ClickMenuState>({ kind: 'closed' });
+  const entityLookup = useMemo(
+    () => new Map(entities.map((entity) => [entity.id, entity])),
+    [entities],
+  );
+  const editingEntity =
+    editingEntityId != null ? entityLookup.get(editingEntityId) ?? null : null;
+
+  useEffect(() => {
+    if (menuState.kind !== 'editing') {
+      return;
+    }
+
+    if (editingEntityId !== menuState.entityId) {
+      setMenuState({
+        kind: 'single',
+        entityId: menuState.entityId,
+        coordinate: menuState.coordinate,
+      });
+    }
+  }, [editingEntityId, menuState]);
+
+  useEffect(() => {
+    if (!map || !deckOverlay) return;
+
+    const hideMenu = () => {
+      setMenuState({ kind: 'closed' });
+      menu.hide();
+    };
+
+    const showSingleEntity = (entity: MissionEntityDto, coordinate: LonLatCoordinate) => {
+      onEndEdit();
+      setSelectedEntityId(entity.id);
+      setMenuState({ kind: 'single', entityId: entity.id, coordinate });
+    };
+
+    const openEditing = (entity: MissionEntityDto, coordinate: LonLatCoordinate) => {
+      setSelectedEntityId(entity.id);
+      onBeginEdit(entity.id);
+      setMenuState({ kind: 'editing', entityId: entity.id, coordinate });
+    };
+
+    const handleLeftClick = (event: MapMouseEvent) => {
+      const coordinate: LonLatCoordinate = [event.lngLat.lng, event.lngLat.lat];
+
+      if (menuState.kind === 'editing' && editingEntity) {
+        if (editingEntity.type === 'route' || editingEntity.type === 'polygon') {
+          if (isEditHandleHit(deckOverlay, event.point.x, event.point.y)) {
+            return;
+          }
+
+          onAddVertex(editingEntity.id, coordinate);
+        } else if (editingEntity.type === 'circle' || editingEntity.type === 'point') {
+          onPinEntity(editingEntity.id, coordinate);
+        } else {
+          return;
+        }
+
+        setSelectedEntityId(null);
+        menu.showAt(coordinate);
+        setMenuState((currentState) =>
+          currentState.kind === 'editing'
+            ? { ...currentState, coordinate }
+            : currentState,
+        );
+        return;
+      }
+
+      const clickedEntities = getClickedEntities(
+        deckOverlay,
+        event.point.x,
+        event.point.y,
+        entityLookup,
+      );
+
+      if (!clickedEntities.length) {
+        if (menuState.kind === 'single') {
+          setSelectedEntityId(null);
+          setMenuState({ kind: 'closed' });
+          menu.hide();
+        }
+        return;
+      }
+
+      menu.showAt(coordinate);
+
+      if (clickedEntities.length === 1) {
+        showSingleEntity(clickedEntities[0], coordinate);
+      } else {
+        onEndEdit();
+        setSelectedEntityId(null);
+        setMenuState({
+          kind: 'plonter',
+          entityIds: clickedEntities.map((entity) => entity.id),
+          source: 'left',
+          coordinate,
+        });
+      }
+    };
+
+    const handleContextMenu = (event: MapMouseEvent) => {
+      event.originalEvent.preventDefault();
+      const clickedEntities = getClickedEntities(
+        deckOverlay,
+        event.point.x,
+        event.point.y,
+        entityLookup,
+      );
+
+      if (!clickedEntities.length) {
+        if (menuState.kind !== 'editing') {
+          const coordinate: LonLatCoordinate = [event.lngLat.lng, event.lngLat.lat];
+          menu.showAt(coordinate);
+          setSelectedEntityId(null);
+          setMenuState({ kind: 'create', coordinate });
+        }
+        return;
+      }
+
+      const coordinate: LonLatCoordinate = [event.lngLat.lng, event.lngLat.lat];
+      menu.showAt(coordinate);
+
+      if (clickedEntities.length === 1) {
+        openEditing(clickedEntities[0], coordinate);
+      } else {
+        setSelectedEntityId(null);
+        setMenuState({
+          kind: 'plonter',
+          entityIds: clickedEntities.map((entity) => entity.id),
+          source: 'right',
+          coordinate,
+        });
+      }
+    };
+
+    const preventBrowserContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+    };
+
+    map.on('click', handleLeftClick);
+    map.on('contextmenu', handleContextMenu);
+    map.getCanvas().addEventListener('contextmenu', preventBrowserContextMenu);
+
+    return () => {
+      map.off('click', handleLeftClick);
+      map.off('contextmenu', handleContextMenu);
+      map.getCanvas().removeEventListener('contextmenu', preventBrowserContextMenu);
+    };
+  }, [
+    deckOverlay,
+    editingEntity,
+    entityLookup,
+    map,
+    menu,
+    menuState.kind,
+    onAddVertex,
+    onBeginEdit,
+    onEndEdit,
+    setSelectedEntityId,
+  ]);
+
+  if (
+    !map ||
+    !menu.state.isOpen ||
+    !menu.state.screenPosition ||
+    menuState.kind === 'closed'
+  ) {
+    return null;
+  }
+
+  const closeMenu = () => {
+    onEndEdit();
+    setMenuState({ kind: 'closed' });
+    menu.hide();
+  };
+
+  const focusOnEntity = (entity: MissionEntityDto) => {
+    map.flyTo({
+      center: [entity.lon, entity.lat],
+      zoom: Math.max(map.getZoom(), 13),
+      duration: 320,
+    });
+  };
+
+  const openEditFromSingle = (entity: MissionEntityDto) => {
+    if (menuState.kind !== 'single') {
+      return;
+    }
+
+    const coordinate = menuState.coordinate;
+    setSelectedEntityId(entity.id);
+    onBeginEdit(entity.id);
+    setMenuState({ kind: 'editing', entityId: entity.id, coordinate });
+    menu.showAt(coordinate);
+  };
+
+  const chooseEntity = (entity: MissionEntityDto) => {
+    if (menuState.kind !== 'plonter') {
+      return;
+    }
+
+    if (menuState.source === 'right') {
+      setSelectedEntityId(entity.id);
+      onBeginEdit(entity.id);
+      setMenuState({
+        kind: 'editing',
+        entityId: entity.id,
+        coordinate: menuState.coordinate,
+      });
+      return;
+    }
+
+    onEndEdit();
+    setSelectedEntityId(entity.id);
+    setMenuState({ kind: 'single', entityId: entity.id, coordinate: menuState.coordinate });
+  };
+
+  const createEntity = (entityType: MissionEntityType) => {
+    if (menuState.kind !== 'create') {
+      return;
+    }
+
+    const entityId = onCreateEntity(entityType, menuState.coordinate);
+    setMenuState({
+      kind: 'editing',
+      entityId,
+      coordinate: menuState.coordinate,
+    });
+    menu.showAt(menuState.coordinate);
+  };
+
+  const finishEditing = (entityId: string) => {
+    onEndEdit();
+    setSelectedEntityId(entityId);
+    setMenuState({ kind: 'closed' });
+    menu.hide();
+  };
+
+  const renderContent = () => {
+    if (menuState.kind === 'create') {
+      return (
+        <>
+          <div className="click-menu-header">
+            <div>
+              <strong>Create entity</strong>
+              <span>{formatCoordinate(menuState.coordinate)}</span>
+            </div>
+            <button type="button" className="menu-close-button" onClick={closeMenu}>
+              X
+            </button>
+          </div>
+          <div className="plonter-list">
+            {entityCreationOptions.map((option) => (
+              <button
+                key={option.type}
+                type="button"
+                className="plonter-item"
+                onClick={() => createEntity(option.type)}
+              >
+                <strong>{option.label}</strong>
+                <span>{option.description}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      );
+    }
+
+    if (menuState.kind === 'single') {
+      const entity = entityLookup.get(menuState.entityId);
+      if (!entity) {
+        return null;
+      }
+
+      return (
+        <>
+          <div className="click-menu-header">
+            <div>
+              <strong>{entity.label}</strong>
+              <span>{entity.type}</span>
+            </div>
+            <button type="button" className="menu-close-button" onClick={closeMenu}>
+              X
+            </button>
+          </div>
+          <p>
+            {entity.category} / {entity.status} / priority {entity.priority}
+          </p>
+          <div className="click-menu-actions">
+            <button type="button" onClick={() => focusOnEntity(entity)}>
+              Focus
+            </button>
+            <button type="button" onClick={() => openEditFromSingle(entity)}>
+              Edit
+            </button>
+          </div>
+        </>
+      );
+    }
+
+    if (menuState.kind === 'plonter') {
+      const plonterEntities = menuState.entityIds
+        .map((entityId) => entityLookup.get(entityId))
+        .filter((entity): entity is MissionEntityDto => Boolean(entity));
+
+      return (
+        <>
+          <div className="click-menu-header">
+            <div>
+              <strong>{plonterEntities.length} entities here</strong>
+              <span>
+                {menuState.source === 'right'
+                  ? 'Choose one to inspect and edit'
+                  : 'Choose one from the plonter menu'}
+              </span>
+            </div>
+            <button type="button" className="menu-close-button" onClick={closeMenu}>
+              X
+            </button>
+          </div>
+          <div className="plonter-list">
+            {plonterEntities.map((entity) => (
+              <button
+                key={entity.id}
+                type="button"
+                className="plonter-item"
+                onClick={() => chooseEntity(entity)}
+              >
+                <strong>{entity.label}</strong>
+                <span>
+                  {entity.type} / {entity.category} / priority {entity.priority}
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      );
+    }
+
+    const entity = entityLookup.get(menuState.entityId);
+    if (!entity) {
+      return null;
+    }
+
+    const primaryColor = getPrimaryColor(entity);
+    const primaryColorLabel = getPrimaryColorLabel(entity);
+
+    return (
+      <>
+        <div className="click-menu-header">
+          <div>
+            <strong>{entity.label}</strong>
+            <span>{entity.type} editor</span>
+          </div>
+          <div className="menu-header-actions">
+            <span className="menu-mode-pill">Edit mode</span>
+            <button type="button" className="menu-close-button" onClick={closeMenu}>
+              X
+            </button>
+          </div>
+        </div>
+        <p className="menu-context-copy">
+          Right-clicked at {formatCoordinate(menuState.coordinate)}. Drag the highlighted handles
+          on the map to reshape this entity. While editing a route or polygon, each map click adds
+          a new point. While editing a circle or point, each map click moves it. These map clicks
+          clear the temporary selection highlight but keep the edit menu open.
+        </p>
+        <div className="menu-form-grid">
+          <label className="menu-field">
+            <span>Name</span>
+            <input
+              type="text"
+              className="menu-text-input"
+              value={entity.label}
+              onChange={(event) => onUpdateLabel(entity.id, event.target.value)}
+            />
+          </label>
+          <label className="menu-field">
+            <span>{primaryColorLabel}</span>
+            <input
+              type="color"
+              className="menu-color-input"
+              value={toColorInputValue(primaryColor)}
+              onChange={(event) => onUpdatePrimaryColor(entity.id, event.target.value)}
+            />
+          </label>
+          {entity.type === 'circle' ? (
+            <label className="menu-field">
+              <span>Radius</span>
+              <input
+                type="number"
+                min={2}
+                max={80}
+                step={1}
+                className="menu-text-input"
+                value={entity.radius}
+                onChange={(event) =>
+                  onUpdateCircleRadius(entity.id, Number(event.target.value) || entity.radius)
+                }
+              />
+            </label>
+          ) : null}
+          {entity.type === 'doubleCircle' ? (
+            <>
+              <label className="menu-field">
+                <span>Inner radius</span>
+                <input
+                  type="number"
+                  min={2}
+                  max={80}
+                  step={1}
+                  className="menu-text-input"
+                  value={entity.innerRadius}
+                  onChange={(event) =>
+                    onUpdateDoubleCircleRadii(
+                      entity.id,
+                      Number(event.target.value) || entity.innerRadius,
+                      entity.outerRadius,
+                    )
+                  }
+                />
+              </label>
+              <label className="menu-field">
+                <span>Outer radius</span>
+                <input
+                  type="number"
+                  min={3}
+                  max={120}
+                  step={1}
+                  className="menu-text-input"
+                  value={entity.outerRadius}
+                  onChange={(event) =>
+                    onUpdateDoubleCircleRadii(
+                      entity.id,
+                      entity.innerRadius,
+                      Number(event.target.value) || entity.outerRadius,
+                    )
+                  }
+                />
+              </label>
+            </>
+          ) : null}
+          {entity.type === 'polygon' ? (
+            <label className="menu-field">
+              <span>Fill color</span>
+              <input
+                type="color"
+                className="menu-color-input"
+                value={toColorInputValue(entity.fillColor)}
+                onChange={(event) => onUpdatePolygonFillColor(entity.id, event.target.value)}
+              />
+            </label>
+          ) : null}
+        </div>
+        <div className="menu-data-grid">
+          <div>
+            <span>Category</span>
+            <strong>{entity.category}</strong>
+          </div>
+          <div>
+            <span>Status</span>
+            <strong>{entity.status}</strong>
+          </div>
+          <div>
+            <span>Priority</span>
+            <strong>{entity.priority}</strong>
+          </div>
+          <div>
+            <span>Anchor</span>
+            <strong>{formatCoordinate([entity.lon, entity.lat])}</strong>
+          </div>
+        </div>
+        <div className="click-menu-actions click-menu-actions--wrap">
+          <button type="button" onClick={() => focusOnEntity(entity)}>
+            Focus
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => finishEditing(entity.id)}
+          >
+            Done
+          </button>
+        </div>
+        <pre className="entity-data-preview">{JSON.stringify(entity, null, 2)}</pre>
+      </>
+    );
+  };
+
+  const content = renderContent();
+  if (!content) {
+    return null;
+  }
+
+  return (
+    <div
+      className="map-click-menu"
+      style={{
+        left: menu.state.screenPosition.x,
+        top: menu.state.screenPosition.y,
+      }}
+    >
+      <div className="click-menu-card">{content}</div>
+    </div>
+  );
+}
+
+function isEditHandleHit(deckOverlay: MapboxOverlay, x: number, y: number): boolean {
+  const picked = deckOverlay.pickObject({
+    x,
+    y,
+    radius: 10,
+    layerIds: ['edit-handles'],
+  });
+
+  return Boolean(picked?.object);
+}
+
+function getClickedEntities(
+  deckOverlay: MapboxOverlay,
+  x: number,
+  y: number,
+  entityLookup: Map<string, MissionEntityDto>,
+): MissionEntityDto[] {
+  const pickedObjects = deckOverlay.pickMultipleObjects({
+    x,
+    y,
+    radius: 8,
+    depth: 16,
+  });
+  const seenIds = new Set<string>();
+  const clickedEntities: MissionEntityDto[] = [];
+
+  for (const picked of pickedObjects) {
+    const entity = resolvePickedEntity(picked, entityLookup);
+    if (!entity || seenIds.has(entity.id)) {
+      continue;
+    }
+
+    seenIds.add(entity.id);
+    clickedEntities.push(entity);
+  }
+
+  return clickedEntities.sort((left, right) => right.priority - left.priority);
+}
+
+function resolvePickedEntity(
+  picked: PickingInfo,
+  entityLookup: Map<string, MissionEntityDto>,
+): MissionEntityDto | null {
+  const object = picked.object as
+    | MissionEntityDto
+    | RouteVertexDatum
+    | EditHandleLike
+    | null
+    | undefined;
+
+  if (!object) {
+    return null;
+  }
+
+  if ('entity' in object && object.entity) {
+    return object.entity;
+  }
+
+  if ('entityId' in object && typeof object.entityId === 'string') {
+    return entityLookup.get(object.entityId) ?? null;
+  }
+
+  if ('id' in object && typeof object.id === 'string') {
+    return entityLookup.get(object.id) ?? (isMissionEntity(object) ? object : null);
+  }
+
+  return null;
+}
+
+function isMissionEntity(value: unknown): value is MissionEntityDto {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      'id' in value &&
+      'label' in value &&
+      'type' in value &&
+      'priority' in value,
+  );
+}
+
+function getPrimaryColor(entity: MissionEntityDto): string {
+  switch (entity.type) {
+    case 'circle':
+      return entity.colorCode;
+    case 'doubleCircle':
+      return entity.colorCode;
+    case 'point':
+      return entity.markerColor;
+    case 'route':
+      return entity.colorCode;
+    case 'polygon':
+      return entity.strokeColor;
+  }
+}
+
+function getPrimaryColorLabel(entity: MissionEntityDto): string {
+  switch (entity.type) {
+    case 'point':
+      return 'Marker color';
+    case 'polygon':
+      return 'Stroke color';
+    default:
+      return 'Color';
+  }
+}
+
+function toColorInputValue(value: string): string {
+  const hexMatch = value.match(/^#([0-9a-f]{6})([0-9a-f]{2})?$/i);
+  if (hexMatch) {
+    return `#${hexMatch[1]}`;
+  }
+
+  const rgbaMatch = value.match(
+    /rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?\s*\)/i,
+  );
+  if (rgbaMatch) {
+    return rgbToHex(
+      Number(rgbaMatch[1]),
+      Number(rgbaMatch[2]),
+      Number(rgbaMatch[3]),
+    );
+  }
+
+  return '#5c677d';
+}
+
+function rgbToHex(red: number, green: number, blue: number): string {
+  return `#${toHex(red)}${toHex(green)}${toHex(blue)}`;
+}
+
+function toHex(value: number): string {
+  return Math.max(0, Math.min(255, Math.round(value)))
+    .toString(16)
+    .padStart(2, '0');
+}
+
+function formatCoordinate([lon, lat]: LonLatCoordinate): string {
+  return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+}
+
+const entityCreationOptions: Array<{
+  type: MissionEntityType;
+  label: string;
+  description: string;
+}> = [
+  { type: 'circle', label: 'Circle', description: 'Create a single-radius circle and edit it.' },
+  {
+    type: 'doubleCircle',
+    label: 'Double circle',
+    description: 'Create a two-ring circle marker at this location.',
+  },
+  { type: 'point', label: 'Point', description: 'Create a point marker and move it on click.' },
+  { type: 'route', label: 'Route', description: 'Create a route and keep clicking to add points.' },
+  {
+    type: 'polygon',
+    label: 'Polygon',
+    description: 'Create a polygon and keep clicking to add vertices.',
+  },
+];
