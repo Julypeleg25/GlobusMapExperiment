@@ -13,10 +13,12 @@ import type {
   RouteEntityDto,
 } from '@shared/types/mission.types';
 import type { MenuOverlayApi } from '../map/menuOverlay';
+import type { EditHandleDatum } from '../model/entityEditing';
 
 interface MapClickMenuProps {
   map: OlMap | null;
   menu: MenuOverlayApi;
+  onPlaneClick?: (pixel: Pixel) => boolean;
   entities: MissionEntityDto[];
   editingEntityId: string | null;
   onBeginEdit: (entityId: string) => void;
@@ -32,6 +34,7 @@ interface MapClickMenuProps {
   ) => void;
   onPinEntity: (entityId: string, coordinate: LonLatCoordinate) => void;
   onAddVertex: (entityId: string, coordinate: LonLatCoordinate) => void;
+  onInsertVertexAtHandle: (handle: EditHandleDatum) => void;
   onCreateEntity: (entityType: MissionEntityType, coordinate: LonLatCoordinate) => string;
 }
 
@@ -58,6 +61,7 @@ interface RouteVertexDatum {
 export function MapClickMenu({
   map,
   menu,
+  onPlaneClick,
   entities,
   editingEntityId,
   onBeginEdit,
@@ -69,6 +73,7 @@ export function MapClickMenu({
   onUpdateDoubleCircleRadii,
   onPinEntity,
   onAddVertex,
+  onInsertVertexAtHandle,
   onCreateEntity,
 }: MapClickMenuProps) {
   const { setSelectedEntityId } = useSelectedEntity();
@@ -119,9 +124,29 @@ export function MapClickMenu({
       const handleLeftClick = (event: MapBrowserEvent<PointerEvent>) => {
       const coordinate = toLonLat(event.coordinate) as LonLatCoordinate;
 
+      if (onPlaneClick?.(event.pixel)) {
+        setMenuState({ kind: 'closed' });
+        menu.hide();
+        return;
+      }
+
       if (menuState.kind === 'editing' && editingEntity) {
+        const clickedHandle = getEditHandleAtPixel(map, event.pixel, editingEntity);
+
+        if (clickedHandle?.kind === 'midpoint') {
+          onInsertVertexAtHandle(clickedHandle);
+          setSelectedEntityId(null);
+          menu.showAt(clickedHandle.position);
+          setMenuState((currentState) =>
+            currentState.kind === 'editing'
+              ? { ...currentState, coordinate: clickedHandle.position }
+              : currentState,
+          );
+          return;
+        }
+
         if (editingEntity.type === 'route' || editingEntity.type === 'polygon') {
-          if (isEditHandleHit(map, event.pixel)) {
+          if (clickedHandle) {
             return;
           }
 
@@ -213,10 +238,12 @@ export function MapClickMenu({
     map,
     menu,
     menuState.kind,
+    onPlaneClick,
     onAddVertex,
     onBeginEdit,
     onEndEdit,
     onPinEntity,
+    onInsertVertexAtHandle,
     setSelectedEntityId,
   ]);
 
@@ -423,9 +450,10 @@ export function MapClickMenu({
         </div>
         <p className="menu-context-copy">
           Right-clicked at {formatCoordinate(menuState.coordinate)}. Drag the highlighted handles
-          on the map to reshape this entity. While editing a route or polygon, each map click adds
-          a new point. While editing a circle or point, each map click moves it. These map clicks
-          clear the temporary selection highlight but keep the edit menu open.
+          on the map to reshape this entity. Green handles are draggable vertices. Red handles
+          insert a new route point when clicked. While editing a route or polygon, each map click
+          adds a new point. While editing a circle or point, each map click moves it. These map
+          clicks clear the temporary selection highlight but keep the edit menu open.
         </p>
         <div className="menu-form-grid">
           <label className="menu-field">
@@ -567,13 +595,6 @@ export function MapClickMenu({
   );
 }
 
-function isEditHandleHit(map: OlMap, pixel: Pixel): boolean {
-  return map.hasFeatureAtPixel(pixel, {
-    hitTolerance: 10,
-    layerFilter: (layer) => layer.get('interactiveRole') === 'editHandle',
-  });
-}
-
 function getClickedEntities(
   map: OlMap,
   pixel: Pixel,
@@ -623,6 +644,72 @@ function resolvePickedEntity(
   }
 
   return null;
+}
+
+function getEditHandleAtPixel(
+  map: OlMap,
+  pixel: Pixel,
+  editingEntity: MissionEntityDto,
+): EditHandleDatum | null {
+  if (editingEntity.type !== 'route' && editingEntity.type !== 'polygon') {
+    return null;
+  }
+
+  return (
+    map.forEachFeatureAtPixel(
+      pixel,
+      (feature, layer) => {
+        if (layer?.get('interactiveRole') !== 'editHandle') {
+          return null;
+        }
+
+        return resolveEditHandleFeature(feature, editingEntity);
+      },
+      {
+        hitTolerance: 10,
+        layerFilter: (layer) => layer.get('interactiveRole') === 'editHandle',
+      },
+    ) ?? null
+  );
+}
+
+function resolveEditHandleFeature(
+  feature: FeatureLike,
+  editingEntity: MissionEntityDto,
+): EditHandleDatum | null {
+  const entityId = feature.get('entityId');
+  if (typeof entityId !== 'string' || entityId !== editingEntity.id) {
+    return null;
+  }
+
+  const handleCoordinate = feature.get('handleCoordinate');
+  if (!isLonLatCoordinate(handleCoordinate)) {
+    return null;
+  }
+
+  const rawKind = feature.get('handleKind');
+  const rawVertexIndex = feature.get('vertexIndex');
+  const rawInsertIndex = feature.get('insertIndex');
+
+  return {
+    id: String(feature.getId() ?? `${entityId}-handle`),
+    entityId,
+    entityType: editingEntity.type,
+    kind:
+      rawKind === 'anchor' ? 'anchor' : rawKind === 'midpoint' ? 'midpoint' : 'vertex',
+    position: handleCoordinate,
+    vertexIndex: typeof rawVertexIndex === 'number' ? rawVertexIndex : undefined,
+    insertIndex: typeof rawInsertIndex === 'number' ? rawInsertIndex : undefined,
+  };
+}
+
+function isLonLatCoordinate(value: unknown): value is LonLatCoordinate {
+  return (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    typeof value[0] === 'number' &&
+    typeof value[1] === 'number'
+  );
 }
 
 function isMissionEntity(value: unknown): value is MissionEntityDto {

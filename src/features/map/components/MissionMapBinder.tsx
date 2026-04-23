@@ -9,8 +9,9 @@ import {
   mapEntitiesToLabelFeatures,
   mapEntitiesToVectorFeatures,
   mapEntityToSelectedFeatures,
+  mapRouteAnnotationsToFeatures,
 } from '../map/featureMappers';
-import type { CircleEntityDto, MissionEntityDto } from '@shared/types/mission.types';
+import type { CircleEntityDto, MissionEntityDto, RouteEntityDto } from '@shared/types/mission.types';
 
 interface MissionMapBinderProps {
   sources: MapSources | null;
@@ -22,7 +23,9 @@ interface MissionMapBinderProps {
   editingEntity: MissionEntityDto | null;
 }
 
-const labelZoomThreshold = 9;
+const labelZoomThreshold = 10;
+const routeAnnotationZoomThreshold = 12;
+const bulkCircleHideZoom = 12.5;
 
 export function MissionMapBinder({
   sources,
@@ -63,9 +66,21 @@ export function MissionMapBinder({
     [filteredStandardEntities, selectedEntityId],
   );
   const labelEntities = useMemo(
-    () => [...visibleCircleEntities, ...visibleStandardEntities],
-    [visibleCircleEntities, visibleStandardEntities],
+    () => [
+      ...(zoom < bulkCircleHideZoom ? visibleCircleEntities : []),
+      ...visibleStandardEntities,
+    ],
+    [visibleCircleEntities, visibleStandardEntities, zoom],
   );
+  const routeAnnotationEntities = useMemo(() => {
+    const visibleRoutes = visibleStandardEntities.filter(isRouteEntity);
+
+    if (selectedEntity?.type === 'route') {
+      return [...visibleRoutes, selectedEntity];
+    }
+
+    return visibleRoutes;
+  }, [selectedEntity, visibleStandardEntities]);
 
   useEffect(() => {
     if (!sources) {
@@ -73,10 +88,21 @@ export function MissionMapBinder({
     }
 
     sources.bulkCirclesSource.clear();
-    sources.bulkCirclesSource.addFeatures(mapCircleEntitiesToFeatures(visibleCircleEntities));
+    if (zoom < bulkCircleHideZoom) {
+      sources.bulkCirclesSource.addFeatures(mapCircleEntitiesToFeatures(visibleCircleEntities));
+    }
 
     sources.entitiesSource.clear();
     sources.entitiesSource.addFeatures(mapEntitiesToVectorFeatures(visibleStandardEntities));
+
+    sources.routeAnnotationsSource.clear();
+    if (zoom >= routeAnnotationZoomThreshold) {
+      sources.routeAnnotationsSource.addFeatures(
+        mapRouteAnnotationsToFeatures(routeAnnotationEntities),
+      );
+    }
+
+    sources.imageMarkersSource.clear();
 
     sources.labelsSource.clear();
     if (showLabels && zoom >= labelZoomThreshold) {
@@ -84,7 +110,7 @@ export function MissionMapBinder({
     }
 
     sources.selectedEntitySource.clear();
-    if (selectedEntity) {
+    if (selectedEntity && !(selectedEntity.type === 'circle' && zoom >= bulkCircleHideZoom)) {
       sources.selectedEntitySource.addFeatures(mapEntityToSelectedFeatures(selectedEntity));
     }
 
@@ -98,6 +124,7 @@ export function MissionMapBinder({
     selectedEntity,
     showLabels,
     sources,
+    routeAnnotationEntities,
     visibleCircleEntities,
     visibleStandardEntities,
     zoom,
@@ -108,10 +135,18 @@ export function MissionMapBinder({
       return;
     }
 
+    layers.bulkCirclesLayer.setVisible(zoom < bulkCircleHideZoom);
     layers.labelsLayer.setVisible(showLabels && zoom >= labelZoomThreshold);
+    layers.routeAnnotationsLayer.setVisible(zoom >= routeAnnotationZoomThreshold);
   }, [layers, showLabels, zoom]);
 
   return null;
+}
+
+function isRouteEntity(
+  entity: Exclude<MissionEntityDto, CircleEntityDto>,
+): entity is RouteEntityDto {
+  return entity.type === 'route';
 }
 
 function filterEntities<TEntity extends MissionEntityDto>(

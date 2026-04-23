@@ -14,12 +14,13 @@ import {
   emptyMissionEntityCollection,
 } from '../model/missionEntityCollection';
 import { FpsMeter } from './FpsMeter';
-import { ImageMarkersCanvas } from './ImageMarkersCanvas';
 import { EntityEditController } from './EntityEditController';
+import { AirTrafficHud } from './AirTrafficHud';
 import {
   addVertexAtLocation,
   applyHandleDrag,
   createEntityAtLocation,
+  insertVertexAtHandle,
   pinEntityToLocation,
   updateCircleRadius,
   updateDoubleCircleRadii,
@@ -29,6 +30,7 @@ import {
   type EditHandleDatum,
 } from '../model/entityEditing';
 import { useSelectedEntity } from '../hooks/useSelectedEntity';
+import { useAirTraffic } from '../hooks/useAirTraffic';
 
 interface MapViewProps {
   missionId: string | null;
@@ -37,6 +39,7 @@ interface MapViewProps {
 export function MapView({ missionId }: MapViewProps) {
   const { containerRef, map, sources, layers, zoom, menu } = useMapInstance();
   const { selectedEntityId, setSelectedEntityId } = useSelectedEntity();
+  const airTraffic = useAirTraffic(map, sources);
   const entitiesQuery = useMissionEntitiesQuery(missionId);
   const [editableEntities, setEditableEntities] = useState<MissionEntityDto[]>([]);
   const [hydratedMissionId, setHydratedMissionId] = useState<string | null>(null);
@@ -133,6 +136,10 @@ export function MapView({ missionId }: MapViewProps) {
     [],
   );
 
+  const handleInsertVertexAtHandle = useCallback((handle: EditHandleDatum) => {
+    setEditableEntities((current) => insertVertexAtHandle(current, handle));
+  }, []);
+
   const handleCreateEntity = useCallback(
     (entityType: MissionEntityType, coordinate: LonLatCoordinate) => {
       creationCounterRef.current += 1;
@@ -160,10 +167,10 @@ export function MapView({ missionId }: MapViewProps) {
       />
       <div className="map-stage">
         <div ref={containerRef} className="map-canvas" />
-        <ImageMarkersCanvas sources={sources} missionId={missionId} />
         <MapClickMenu
           map={map}
           menu={menu}
+          onPlaneClick={airTraffic.handlePlaneClick}
           entities={entityCollection.entities}
           editingEntityId={editingEntityId}
           onBeginEdit={handleBeginEdit}
@@ -175,12 +182,18 @@ export function MapView({ missionId }: MapViewProps) {
           onUpdateDoubleCircleRadii={handleUpdateDoubleCircleRadii}
           onPinEntity={handlePinEntity}
           onAddVertex={handleAddVertex}
+          onInsertVertexAtHandle={handleInsertVertexAtHandle}
           onCreateEntity={handleCreateEntity}
         />
         <EntityEditController
           map={map}
           editingEntity={editingEntity}
           onApplyHandleDrag={handleApplyHandleDrag}
+        />
+        <AirTrafficHud
+          aircraft={airTraffic.selectedAircraft}
+          mainAircraft={airTraffic.mainAircraft}
+          onClear={airTraffic.clearSelectedAircraft}
         />
         <FpsMeter />
         <div className="map-watermark">

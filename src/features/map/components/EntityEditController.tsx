@@ -60,7 +60,7 @@ export function EntityEditController({
         return null;
       }
 
-      return (
+      const handle =
         map.forEachFeatureAtPixel(
           pixel,
           (feature, layer) => {
@@ -74,8 +74,13 @@ export function EntityEditController({
             hitTolerance: 10,
             layerFilter: (layer) => layer.get('interactiveRole') === 'editHandle',
           },
-        ) ?? null
-      );
+        ) ?? null;
+
+      if (!handle || handle.kind === 'midpoint') {
+        return null;
+      }
+
+      return handle;
     };
 
     const applyDragPosition = (handle: EditHandleDatum, event: MouseEvent | PointerEvent) => {
@@ -106,7 +111,13 @@ export function EntityEditController({
         return;
       }
 
-      viewport.style.cursor = pickHandle(event) ? 'grab' : '';
+      const handle = resolveAnyHandleAtEvent(map, event, currentEntity);
+      if (!handle) {
+        viewport.style.cursor = '';
+        return;
+      }
+
+      viewport.style.cursor = handle.kind === 'midpoint' ? 'pointer' : 'grab';
     };
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -208,15 +219,41 @@ function resolveHandleFeature(
 
   const rawKind = feature.get('handleKind');
   const rawVertexIndex = feature.get('vertexIndex');
+  const rawInsertIndex = feature.get('insertIndex');
 
   return {
     id: String(feature.getId() ?? `${entityId}-handle`),
     entityId,
     entityType: editingEntity.type,
-    kind: rawKind === 'anchor' ? 'anchor' : 'vertex',
+    kind:
+      rawKind === 'anchor' ? 'anchor' : rawKind === 'midpoint' ? 'midpoint' : 'vertex',
     position: handleCoordinate,
     vertexIndex: typeof rawVertexIndex === 'number' ? rawVertexIndex : undefined,
+    insertIndex: typeof rawInsertIndex === 'number' ? rawInsertIndex : undefined,
   };
+}
+
+function resolveAnyHandleAtEvent(
+  map: Map,
+  event: MouseEvent | PointerEvent,
+  editingEntity: MissionEntityDto,
+): EditHandleDatum | null {
+  return (
+    map.forEachFeatureAtPixel(
+      map.getEventPixel(event),
+      (feature, layer) => {
+        if (layer?.get('interactiveRole') !== 'editHandle') {
+          return null;
+        }
+
+        return resolveHandleFeature(feature, editingEntity);
+      },
+      {
+        hitTolerance: 10,
+        layerFilter: (layer) => layer.get('interactiveRole') === 'editHandle',
+      },
+    ) ?? null
+  );
 }
 
 function isLonLatCoordinate(value: unknown): value is LonLatCoordinate {

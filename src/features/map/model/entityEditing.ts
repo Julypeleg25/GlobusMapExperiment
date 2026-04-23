@@ -14,10 +14,11 @@ import type {
 export interface EditHandleDatum {
   id: string;
   entityId: string;
-  kind: 'anchor' | 'vertex';
+  kind: 'anchor' | 'vertex' | 'midpoint';
   entityType: MissionEntityDto['type'];
   position: LonLatCoordinate;
   vertexIndex?: number;
+  insertIndex?: number;
 }
 
 export function updateEntityLabel(
@@ -122,6 +123,26 @@ export function addVertexAtLocation(
   });
 }
 
+export function insertVertexAtHandle(
+  entities: MissionEntityDto[],
+  handle: EditHandleDatum,
+): MissionEntityDto[] {
+  if (handle.kind !== 'midpoint' || handle.insertIndex == null) {
+    return entities;
+  }
+  const insertIndex = handle.insertIndex;
+
+  return updateEntityById(entities, handle.entityId, (entity) => {
+    if (entity.type !== 'route') {
+      return entity;
+    }
+
+    const path = entity.path.slice();
+    path.splice(insertIndex, 0, handle.position);
+    return withUpdatedRouteAnchor({ ...entity, path });
+  });
+}
+
 export function getEditHandles(entity: MissionEntityDto): EditHandleDatum[] {
   switch (entity.type) {
     case 'circle':
@@ -129,14 +150,24 @@ export function getEditHandles(entity: MissionEntityDto): EditHandleDatum[] {
     case 'point':
       return [];
     case 'route':
-      return entity.path.map((position, index) => ({
-        id: `${entity.id}-vertex-${index + 1}`,
-        entityId: entity.id,
-        entityType: entity.type,
-        kind: 'vertex',
-        position,
-        vertexIndex: index,
-      }));
+      return [
+        ...entity.path.map((position, index) => ({
+          id: `${entity.id}-vertex-${index + 1}`,
+          entityId: entity.id,
+          entityType: entity.type,
+          kind: 'vertex' as const,
+          position,
+          vertexIndex: index,
+        })),
+        ...entity.path.slice(0, -1).map((position, index) => ({
+          id: `${entity.id}-midpoint-${index + 1}`,
+          entityId: entity.id,
+          entityType: entity.type,
+          kind: 'midpoint' as const,
+          position: getMidpoint(position, entity.path[index + 1]),
+          insertIndex: index + 1,
+        })),
+      ];
     case 'polygon': {
       const vertices = entity.ring.slice(0, -1);
       return vertices.map((position, index) => ({
@@ -159,6 +190,10 @@ export function applyHandleDrag(
   return updateEntityById(entities, handle.entityId, (entity) => {
     if (handle.kind === 'anchor') {
       return moveEntityAnchor(entity, coordinate);
+    }
+
+    if (handle.kind === 'midpoint') {
+      return entity;
     }
 
     if (handle.vertexIndex == null) {
@@ -345,6 +380,13 @@ function createPolygonRing(center: LonLatCoordinate): LonLatCoordinate[] {
     [lon - 0.03, lat + 0.035],
     [lon - 0.04, lat - 0.025],
   ];
+}
+
+function getMidpoint(
+  [startLon, startLat]: LonLatCoordinate,
+  [endLon, endLat]: LonLatCoordinate,
+): LonLatCoordinate {
+  return [(startLon + endLon) / 2, (startLat + endLat) / 2];
 }
 
 function toDisplayType(entityType: MissionEntityType): string {

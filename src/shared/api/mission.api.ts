@@ -17,7 +17,7 @@ interface Hub {
   lat: number;
 }
 
-const bulkCircleCount = 5000;
+const bulkCircleCount = 1500;
 const routeCount = 12;
 const polygonCount = 18;
 const pointCount = 28;
@@ -68,9 +68,9 @@ export async function getMission(missionId: string): Promise<MissionDto> {
 function createCircleEntities(seedInput: string): CircleEntityDto[] {
   const random = createSeededRandom(`circles-${seedInput}`);
   const entities: CircleEntityDto[] = [];
-  const gridColumns = 50;
-  const gridRows = 70;
-  const overlapCount = 1800;
+  const gridColumns = 30;
+  const gridRows = 35;
+  const overlapCount = 450;
   const gridCount = bulkCircleCount - overlapCount;
   const lonStep = (35.85 - 34.2) / gridColumns;
   const latStep = (33.3 - 29.55) / gridRows;

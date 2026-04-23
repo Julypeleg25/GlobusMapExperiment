@@ -5,9 +5,12 @@ import type Geometry from 'ol/geom/Geometry';
 import type Point from 'ol/geom/Point';
 import type VectorSource from 'ol/source/Vector';
 import type { MapSources } from './createSources';
+import { createAircraftStyle } from './aircraftStyle';
 import { createLabelStyle } from './labelStyle';
 import { createBulkWebglStyle } from './mapStyle';
+import { createRouteAnnotationStyle } from './routeAnnotationStyle';
 import {
+  createAircraftLinkWebglStyle,
   createEditHandleWebglStyle,
   createEntityWebglStyle,
   createImageMarkerWebglStyle,
@@ -17,7 +20,10 @@ import {
 export interface MapLayers {
   bulkCirclesLayer: WebGLVectorLayer;
   entitiesLayer: WebGLVectorLayer<VectorSource<Feature<Geometry>>>;
+  routeAnnotationsLayer: VectorLayer<VectorSource<Feature<Geometry>>>;
   imageMarkersLayer: WebGLVectorLayer<VectorSource<Feature<Point>>>;
+  aircraftLinksLayer: WebGLVectorLayer<VectorSource<Feature<Geometry>>>;
+  aircraftLayer: VectorLayer<VectorSource<Feature<Point>>>;
   labelsLayer: VectorLayer<VectorSource<Feature<Point>>>;
   selectedEntityLayer: WebGLVectorLayer<VectorSource<Feature<Geometry>>>;
   editHandlesLayer: WebGLVectorLayer<VectorSource<Feature<Point>>>;
@@ -29,6 +35,7 @@ export function createLayers(sources: MapSources): MapLayers {
     style: createBulkWebglStyle(),
     minZoom: 0,
     maxZoom: 28,
+    zIndex: 100,
   });
 
   const entitiesLayer = new WebGLVectorLayer({
@@ -37,24 +44,54 @@ export function createLayers(sources: MapSources): MapLayers {
     disableHitDetection: false,
     minZoom: 0,
     maxZoom: 28,
+    zIndex: 200,
   });
   entitiesLayer.set('selectable', true);
   entitiesLayer.set('interactiveRole', 'entity');
+
+  const routeAnnotationsLayer = new VectorLayer({
+    source: sources.routeAnnotationsSource,
+    style: createRouteAnnotationStyle(),
+    minZoom: 12,
+    updateWhileAnimating: false,
+    updateWhileInteracting: false,
+    zIndex: 920,
+  });
+  routeAnnotationsLayer.set('selectable', false);
 
   const imageMarkersLayer = new WebGLVectorLayer({
     source: sources.imageMarkersSource,
     style: createImageMarkerWebglStyle(),
     disableHitDetection: true,
-    minZoom: 7,
+    minZoom: 0,
     maxZoom: 28,
+    zIndex: 1005,
   });
   imageMarkersLayer.set('selectable', false);
+
+  const aircraftLinksLayer = new WebGLVectorLayer({
+    source: sources.aircraftLinksSource,
+    style: createAircraftLinkWebglStyle(),
+    disableHitDetection: true,
+    zIndex: 950,
+  });
+  aircraftLinksLayer.set('selectable', false);
+
+  const aircraftLayer = new VectorLayer({
+    source: sources.aircraftSource,
+    style: createAircraftStyle(),
+    updateWhileAnimating: true,
+    updateWhileInteracting: true,
+    zIndex: 1020,
+  });
+  aircraftLayer.set('selectable', false);
+  aircraftLayer.set('interactiveRole', 'aircraft');
 
   const labelsLayer = new VectorLayer({
     source: sources.labelsSource,
     style: createLabelStyle(),
     declutter: true,
-    minZoom: 8,
+    minZoom: 10,
     maxZoom: 28,
     updateWhileAnimating: false,
     updateWhileInteracting: false,
@@ -79,13 +116,15 @@ export function createLayers(sources: MapSources): MapLayers {
   editHandlesLayer.set('selectable', false);
   editHandlesLayer.set('interactiveRole', 'editHandle');
 
-  bulkCirclesLayer.set('selectable', true);
-  bulkCirclesLayer.set('interactiveRole', 'entity');
+  bulkCirclesLayer.set('selectable', false);
 
   return {
     bulkCirclesLayer,
     entitiesLayer,
+    routeAnnotationsLayer,
     imageMarkersLayer,
+    aircraftLinksLayer,
+    aircraftLayer,
     labelsLayer,
     selectedEntityLayer,
     editHandlesLayer,

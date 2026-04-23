@@ -8,14 +8,17 @@ import type { MapLayers } from './createLayers';
 export function createMap(target: HTMLElement, layers: MapLayers): Map {
   return new Map({
     target,
-    pixelRatio: 1,
+    pixelRatio: 0.75,
     controls: [],
     layers: [
       new TileLayer({ source: new OSM() }),
       layers.bulkCirclesLayer,
       layers.entitiesLayer,
+      layers.routeAnnotationsLayer,
       layers.imageMarkersLayer,
+      layers.aircraftLinksLayer,
       layers.selectedEntityLayer,
+      layers.aircraftLayer,
       layers.editHandlesLayer,
       layers.labelsLayer,
     ],
